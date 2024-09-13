@@ -8,30 +8,20 @@ template<typename T, typename F = plus<T>, bool Indexed = true>
 class SqrtTree {
 
     template<bool Top = false>
-    struct Item {
+    class Item {
         int block_size;
-        vector<T> suffix, prefix;
+        vector<T> arr, suffix, prefix;
         conditional_t<Top, SqrtTree<T, F, false>, vector<vector<T>>> between;
-
-        T query(int l, int r, const F& f) const {
-            int fst_block = l / block_size;
-            int lst_block = r / block_size;
-
-            if (lst_block > fst_block + 1) {
-                if constexpr (Top)
-                    return f(f(suffix[l], between.query(fst_block + 1, lst_block)), prefix[r]);
-                else
-                    return f(f(suffix[l], between[fst_block + 1][lst_block - 1]), prefix[r]);
-            }
-            return f(suffix[l], prefix[r]);
-        }
 
         decltype(between) build(const F& f) {
             for (int i = 0; i < prefix.size(); i += block_size) {
+                prefix[i] = arr[i];
                 for (int j =  1; j < block_size; j++)
-                    prefix[i + j] = f(prefix[i + j - 1], prefix[i + j]);
+                    prefix[i + j] = f(prefix[i + j - 1], arr[i + j]);
+
+                suffix[i + block_size - 1] = arr[i + block_size - 1];
                 for (int j = block_size - 2; j >= 0; j--)
-                    suffix[i + j] = f(suffix[i + j + 1], suffix[i + j]);
+                    suffix[i + j] = f(arr[i + j], suffix[i + j + 1]);
             }
 
             int blocks = prefix.size() / block_size;
@@ -54,8 +44,53 @@ class SqrtTree {
             }
         }
 
+        public:
+
+        void update(int pos, const T& val, const F& f) {
+            arr[pos] = val;
+
+            int j = pos;
+            if (j % block_size == 0)
+                prefix[j++] = val;
+
+            for (; j % block_size != 0; j++)
+                prefix[j] = f(prefix[j - 1], arr[j]);
+
+            j = pos;
+            if (j % block_size == block_size - 1)
+                suffix[j--] = val;
+
+            for (; j >= 0 && j % block_size != block_size - 1; j--)
+                suffix[j] = f(arr[j], suffix[j + 1]);
+
+            if constexpr (Top) {
+                int b = pos / block_size;
+                between.update(b, suffix[block_size * b]);
+            } else {
+                int blocks = prefix.size() / block_size;
+                for (int i = 0; i < blocks; i++) {
+                    between[i][i] = suffix[i * block_size];
+                    for (int j = i + 1; j < blocks; j++)
+                        between[i][j] = f(between[i][j - 1], suffix[j * block_size]);
+                }
+            }
+        }
+
+        T query(int l, int r, const F& f) const {
+            int fst_block = l / block_size;
+            int lst_block = r / block_size;
+
+            if (lst_block > fst_block + 1) {
+                if constexpr (Top)
+                    return f(f(suffix[l], between.query(fst_block + 1, lst_block)), prefix[r]);
+                else
+                    return f(f(suffix[l], between[fst_block + 1][lst_block - 1]), prefix[r]);
+            }
+            return f(suffix[l], prefix[r]);
+        }
+
         Item(typename vector<T>::iterator start, typename vector<T>::iterator end, int block_size, const F& f)
-            : block_size(block_size), suffix(start, end), prefix(start, end), between(std::move(build(f))) { }
+            : block_size(block_size), arr(start, end), prefix(arr.size()), suffix(arr.size()), between(std::move(build(f))) { }
     };
 
     static constexpr int get_layer[] = {
@@ -100,6 +135,14 @@ class SqrtTree {
     Item<Indexed> top_layer;
 
 public:
+
+    void update(int pos, const T& val) {
+        arr[pos] = val;
+        for (int curr = 2, layer = 0; (1LL << curr) < arr.size(); curr *= 2, layer++) {
+            layers[layer][pos >> curr].update(pos & ((1LL << curr) - 1), val, f);
+        }
+        top_layer.update(pos, val, f);
+    }
 
     T query(int l, int r) const {
         switch (r - l) {
